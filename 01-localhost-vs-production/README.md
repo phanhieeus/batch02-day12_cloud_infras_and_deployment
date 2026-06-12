@@ -67,6 +67,25 @@ python app.py
 
 ## Câu hỏi thảo luận
 
-1. Điều gì xảy ra nếu bạn push code với API key hardcode lên GitHub public?
-2. Tại sao stateless quan trọng khi scale?
-3. 12-factor nói "dev/prod parity" — nghĩa là gì trong thực tế?
+1. **Điều gì xảy ra nếu bạn push code với API key hardcode lên GitHub public?**
+
+   - Bot tự động scan GitHub liên tục để tìm các pattern key (`sk-...`, `AKIA...`...) — key bị lấy trong vài giây đến vài phút.
+   - Key bị lạm dụng để gọi API tràn lan → hóa đơn hàng nghìn USD trong vài giờ.
+   - Xóa file khỏi code chưa đủ — key vẫn còn trong **git history**. Phải dùng `git filter-repo`/BFG để xóa lịch sử **và** revoke + tạo key mới ngay lập tức.
+   - Đây là lý do `production/config.py` đọc `OPENAI_API_KEY` từ `os.getenv(...)`, và `.env` (chứa secret thật) bị `.gitignore`, chỉ commit `.env.example` làm template.
+
+2. **Tại sao stateless quan trọng khi scale?**
+
+   - Stateless = app không lưu trạng thái (session, cache, file tạm...) trong memory/disk riêng của instance.
+   - Khi scale, nhiều instance chạy sau load balancer — nếu state nằm ở instance A, request sau có thể vào instance B và không thấy state đó → lỗi/mất dữ liệu.
+   - Cloud platform có thể kill/restart container bất kỳ lúc nào (deploy, auto-scale, crash). State trong container đó sẽ mất.
+   - `production/app.py` xử lý SIGTERM để **graceful shutdown** (hoàn thành request hiện tại trước khi tắt) và có `/health`, `/ready` để platform biết instance nào sống/sẵn sàng — giúp tự do scale up/down.
+   - State thật cần lưu (session, data) phải đưa ra backing service bên ngoài (Redis, Postgres, S3...).
+
+3. **12-factor nói "dev/prod parity" — nghĩa là gì trong thực tế?**
+
+   - Giảm khoảng cách giữa dev và production ở 3 khía cạnh: thời gian, người, và **công nghệ/cấu hình**.
+   - Cùng 1 codebase (`production/app.py`) chạy cho cả dev và prod — khác biệt chỉ ở **giá trị biến môi trường** (`ENVIRONMENT`, `DEBUG`), không phải code khác nhau.
+   - `config.py` có `validate()` raise lỗi ngay khi khởi động nếu thiếu `AGENT_API_KEY` ở production — "fail fast", phát hiện thiếu config trước khi deploy.
+   - Anti-pattern ở `develop/app.py` (host `localhost`, port cứng, `reload=True`) vi phạm parity — chỉ chạy đúng trên máy dev, không chạy được trong container/cloud.
+   - Parity cũng áp dụng cho backing services: nếu dev dùng SQLite còn prod dùng Postgres, bug liên quan DB sẽ không xuất hiện ở dev — chỉ nổ ra ở production.
